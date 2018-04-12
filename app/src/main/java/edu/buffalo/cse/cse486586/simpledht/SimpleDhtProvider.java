@@ -44,9 +44,24 @@ public class SimpleDhtProvider extends ContentProvider {
     String myPortID;
     String myHash;
     String startPortID = "11108";
-    //public synchronized ArrayList<String> arrayList=new ArrayList<String>();
     List<String> syncList=Collections.synchronizedList(new LinkedList());
     boolean receivedAll=false;
+
+    /*
+    *https://developer.android.com/reference/android/database/MatrixCursor.html
+    * https://docs.oracle.com/javase/tutorial/essential/concurrency/locksync.html
+    * https://docs.oracle.com/javase/tutorial/essential/concurrency/guardmeth.html
+    * From PA2B
+    * https://docs.oracle.com/javase/7/docs/api/java/net/SocketTimeoutException.html
+    * https://docs.oracle.com/javase/tutorial/networking/sockets/index.html
+    * https://developer.android.com/guide/topics/providers/content-provider-basics.html
+    * https://developer.android.com/guide/topics/providers/content-provider-creating.html
+    * https://developer.android.com/reference/android/os/AsyncTask.html
+    * Used code from my PA2B
+     */
+
+
+    //changes made--- insert conditions replaced with checkIfKeyBelongsToMe()
 
     SQLiteDatabase sqlDB;
     String [] colNames={"key","value"};
@@ -61,7 +76,7 @@ public class SimpleDhtProvider extends ContentProvider {
         sqlDB=dbHelper.getWritableDatabase();
         int deletedRows=0;
         //check if only one avd - then all delete will be from here
-        if(predecessor==myPortID && successor==myPortID){
+        if(predecessor.equals(myPortID) && successor.equals(myPortID)){
             if(selection.equals("*") || selection.equals("@")){
                 //delete all from the avd
                 deletedRows = sqlDB.delete(DBHelper.TABLE_NAME, null, null);
@@ -72,9 +87,27 @@ public class SimpleDhtProvider extends ContentProvider {
         }else if(selection.equals("@")){
             deletedRows = sqlDB.delete(DBHelper.TABLE_NAME, null, null);
         }else if(selection.equals("*")){
+
             Log.d(TAG,"DELETE: DELETE ALL");
+            deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection});
+            Message deleteForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "DELETE");
+            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, deleteForward.toString(), successor);
+
         }else if(selection.contains("*")){
             Log.d(TAG,"DELETE: DELETE FORWARD");
+
+            String key = selection.split(":")[0];
+            String[] selectArgs = {key};
+            String originPort = selection.split(":")[1];
+
+            if(originPort.equals(myPortID)){
+                Log.d(TAG,"DELETE: DELETE ALL COMPLETE");
+            }
+            else{
+                deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection.split(":")[0]});
+                Message deleteForward = new Message(myPortID, selection, null, myPortID, "DELETE");
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, deleteForward.toString(), successor);
+            }
         }else if (!selection.contains(":")) {
             //has a key
             Log.d(TAG, "DELETE: DELETE SELECTION IS: " + selection);
@@ -93,8 +126,8 @@ public class SimpleDhtProvider extends ContentProvider {
                 //else forward the request to the next node
                // synchronized (syncList) {
                     Log.d(TAG, "DELETE: DELETE KEY:  FORWARD");
-                    Message queryForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "DELETE");
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
+                    Message deleteForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "DELETE");
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, deleteForward.toString(), successor);
 
             }
         } else {
@@ -160,19 +193,9 @@ public class SimpleDhtProvider extends ContentProvider {
         Log.d(TAG,"INSERT: My hash: "+myHash+"\nPredecessor Hash: "+predHash+"\nSucessor Hash: "+succHash+"\nKey Hash: "+originHash);
 
         long id=0;
+
         //check if only one avd, then only one insert
-        if(predecessor.equals(myPortID) && successor.equals(myPortID)){
-            Log.d(TAG,"INSERT: ONLY ONE AVD");
-            //instead of insert,using insertWithOnConflict to be able to handle conflicts.
-            try {
-                id = sqlDB.insertWithOnConflict(DBHelper.TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE);
-            }
-            catch(Exception e){
-                e.printStackTrace();
-            }
-        }
-        else if(predHash.compareTo(originHash)<=0 && originHash.compareTo(myHash)<0){
-            //my key space
+        if(checkIfKeyBelongsToMe(originHash)){
             Log.d(TAG,"INSERT: MY KEY SPACE");
             try {
                 id = sqlDB.insertWithOnConflict(DBHelper.TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE);
@@ -180,27 +203,6 @@ public class SimpleDhtProvider extends ContentProvider {
             catch(Exception e){
                 e.printStackTrace();
             }
-        }
-        else if(predHash.compareTo(myHash)>0 && originHash.compareTo(predHash)>0 ){
-            //first avd and key greater than all
-            Log.d(TAG,"INSERT: FIRST AVD");
-            try {
-                id = sqlDB.insertWithOnConflict(DBHelper.TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE);
-            }
-            catch(Exception e){
-                e.printStackTrace();
-            }
-        }
-        else if(originHash.compareTo(predHash)<0 && originHash.compareTo(myHash)<0 && predHash.compareTo(myHash)>0){
-            //key less than all
-            Log.d(TAG,"INSERT: SMALL KEY");
-            try {
-                id = sqlDB.insertWithOnConflict(DBHelper.TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE);
-            }
-            catch(Exception e){
-                e.printStackTrace();
-            }
-
         }
         else{
             //forward to your successor
@@ -285,10 +287,8 @@ public class SimpleDhtProvider extends ContentProvider {
         sqLiteQueryBuilder.setTables(DBHelper.TABLE_NAME);
         String [] mSelectionArgs={selection};
 
-
             //Cursor cursor=sqLiteQueryBuilder.query(sqlDB,projection,selection, selectionArgs,null,null, sortOrder);
             Cursor cursor = null;
-
             //check if only one avd - then all delete will be from here
             if (predecessor == myPortID && successor == myPortID) {
                 if (selection.equals("*") || selection.equals("@")) {
@@ -327,7 +327,6 @@ public class SimpleDhtProvider extends ContentProvider {
                     }
                 }
                     for (String s : syncList) {
-
                         Object[] objectValues = new Object[2];
                         if(!s.equals(null) && s.contains("-")) {
                             objectValues[0] = s.split("-")[0]; //key
@@ -349,7 +348,6 @@ public class SimpleDhtProvider extends ContentProvider {
                         receivedAll = true;
                         syncList.notify();
                     }
-
                     //copy from list to cursor and return cursor
                     //return cursor
                 } else {
@@ -402,7 +400,6 @@ public class SimpleDhtProvider extends ContentProvider {
                             }
                         }
                         Log.d(TAG, "RESPONSE: SIZE IS: " + syncList.size());
-
                     }
                         for (String s : syncList) {
                             Log.d(TAG, "LIST ITEM: " + s);
@@ -414,7 +411,6 @@ public class SimpleDhtProvider extends ContentProvider {
                             }
                         }
                         syncList.clear();
-
                    return matrixCursor;
                 }
             } else {
@@ -450,8 +446,6 @@ public class SimpleDhtProvider extends ContentProvider {
                 }
             }
             return cursor;
-            //return null;
-
     }
 
     public boolean checkIfKeyBelongsToMe(String originHash){
@@ -465,7 +459,6 @@ public class SimpleDhtProvider extends ContentProvider {
         } catch (NoSuchAlgorithmException e) {
             e.printStackTrace();
         }
-
         if(predecessor.equals(myPortID) && successor.equals(myPortID)){
             //only One AVD in the ring
             Log.d(TAG,"CHECK: ONLY ONE AVD");
@@ -483,13 +476,8 @@ public class SimpleDhtProvider extends ContentProvider {
             Log.d(TAG,"CHECK: SMALLEST KEY");
             return true;
         }
-
-
         return false;
     }
-
-
-
 
     @Override
     public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
@@ -514,10 +502,7 @@ public class SimpleDhtProvider extends ContentProvider {
         uriBuilder.scheme(scheme);
         return uriBuilder.build();
     }
-
-
     private class ServerTask extends AsyncTask<ServerSocket, String, Void> {
-
         @Override
         protected Void doInBackground(ServerSocket... sockets) {
             ServerSocket serverSocket = sockets[0];
@@ -553,8 +538,9 @@ public class SimpleDhtProvider extends ContentProvider {
                         int succPort = Integer.parseInt(successor)/2;
                         String succHash=genHash(String.valueOf(succPort));
 
-
                         if(msgType.equals("JOIN")){
+
+                            //Sending predecessor as key value, sucessor as sender value and data as value
                             Log.d(TAG,"JOIN Request at port: "+myPortID);
                             Log.d(TAG,"MSG RECEIVED: "+msgReceived);
                             //check if you have to handle
@@ -565,10 +551,16 @@ public class SimpleDhtProvider extends ContentProvider {
                                 //update your predecessor value and send message to pred and origin to update their successor and prredecessor
                                 String old_predeccesor=predecessor;
                                 msg.setType("UPDATE_NEIGHBOR");
-                                msg.setValue(old_predeccesor);
+                                //msg.setValue(old_predeccesor);
+                                msg.setKey(old_predeccesor);
 
                                 predecessor= msgValues[0];
                                 msg.setSender(myPortID);
+
+                                //fetch data now belonging to newAVD and delete from my storage
+                                String response=deleteAndReturn(originHash);
+                                //send it along with the message
+                                msg.setValue(response);
 
                                // new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg.toString(),msgValues[0]);
                                 Message msg2=new Message(msgValues[0],msgValues[1],msgValues[2],msgValues[3],"UPDATE_SUCCESSOR");
@@ -585,10 +577,13 @@ public class SimpleDhtProvider extends ContentProvider {
                                 Log.d(TAG,"I AM FIRST: My PORT ID: "+myPortID);
                                 predecessor=msgValues[0];
                                 successor=msgValues[0];
+                                String response=deleteAndReturn(originHash);
+                                //msg.setValue(response);
+
 
                                 Log.d(TAG,"Updated my neighbors: "+predecessor+" and "+successor);
                                 Log.d(TAG,"Sending msg to new node");
-                                Message msg2=new Message(msgValues[0],msgValues[1],myPortID,myPortID,"UPDATE_NEIGHBOR");
+                                Message msg2=new Message(msgValues[0],myPortID,response,myPortID,"UPDATE_NEIGHBOR");
                                 publishProgress(msg2.toString(),msgValues[0],null,null);
                             }
                             else if(myHash.compareTo(originHash)>0 && originHash.compareTo(predHash)>=0){
@@ -597,10 +592,13 @@ public class SimpleDhtProvider extends ContentProvider {
                                 //you are the successor
                                 String old_predeccesor=predecessor;
                                 msg.setType("UPDATE_NEIGHBOR");
-                                msg.setValue(old_predeccesor);
+                                msg.setKey(old_predeccesor);
 
                                 predecessor= msgValues[0];
                                 msg.setSender(myPortID);
+
+                                String response=deleteAndReturn(originHash);
+                                msg.setValue(response);
 
                                 //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg.toString(),msgValues[0]);
                                 Message msg2=new Message(msgValues[0],msgValues[1],msgValues[2],msgValues[3],"UPDATE_SUCCESSOR");
@@ -629,10 +627,22 @@ public class SimpleDhtProvider extends ContentProvider {
 
                             //updating predecessor and successor
                             //yet to handle distribution of data
-                            predecessor=msg.getValue();
-
+                            predecessor=msg.getKey();
                             successor=msg.getSender();
                             Log.d(TAG,"Updated my neighbors: "+predecessor+" and "+successor);
+                            String response=msg.getValue();
+                            Log.d(TAG,"JOIN: DATA RECEIVED IS: "+response);
+                            String[] keyValuePairs=response.split(",");
+                            for(String s:keyValuePairs){
+                                if(s.contains("-")){
+                                    ContentValues mContentValues = new ContentValues();
+                                    mContentValues.put("key", s.split("-")[0]);
+                                    mContentValues.put("value", s.split("-")[1]);
+                                    insert(mUri,mContentValues);
+                                    Log.d(TAG,"JOIN: INSERT IN NEW AVD inserted");
+                                }
+                            }
+
                         }
                         else if(msgType.equals("UPDATE_SUCCESSOR")){
                             Log.d(TAG,"ServerTask:UPDATE_SUCCESSOR");
@@ -669,7 +679,6 @@ public class SimpleDhtProvider extends ContentProvider {
                                 synchronized (syncList){
                                     for(String s:pairs){
                                         syncList.add(s);
-
                                     }
                                     Log.d(TAG,"QUERY_RESPONSE: SYNCHRONIZED LIST");
                                     Log.d(TAG,syncList.get(0));
@@ -681,14 +690,10 @@ public class SimpleDhtProvider extends ContentProvider {
                         else if(msgType.equals("INSERT")){
                             Log.d(TAG,"ServerTask:INSERT");
                             ContentValues mContentValues = new ContentValues();
-                            //Log.d(TAG, "Key value is " + keyVal);
-                            //Log.d(TAG, "Value is " + strArray[0]);
-                            //Log.d(TAG, "Value is " + strArray[0] + " "+ strArray[1] + " "+ strArray[2] + " "+ strArray[3]+ " "+ strArray[4]);
                             mContentValues.put("key", msg.getKey());
                             mContentValues.put("value", msg.getValue());
                             insert(mUri,mContentValues);
                             Log.d(TAG,"ServerTask:INSERT    inserted");
-
                         }
                         else if(msgType.equals("DELETE")){
                             Log.d(TAG,"ServerTask:DELETE");
@@ -697,20 +702,41 @@ public class SimpleDhtProvider extends ContentProvider {
                         else{
                             Log.d(TAG,"ServerTask:else");
                         }
-
                     }
                     client.close();
                 } catch (Exception e){
                     e.printStackTrace();
-                }/*catch (IOException e) {
-                    e.printStackTrace();
-                } catch (NoSuchAlgorithmException e) {
-                    e.printStackTrace();
-                }*/
+                }
                // return null;
             } // end of while loop
-
         }  //end-doInBackground
+
+        public String deleteAndReturn(String originHash){
+            String response="";
+            List<String> keyList=new ArrayList<String>();
+            Cursor qCursor=query(mUri,null,"@",null,null);
+            if(qCursor!=null){
+                while(qCursor.moveToNext()){
+                    String key=qCursor.getString(qCursor.getColumnIndex("key"));
+                    String value=qCursor.getString(qCursor.getColumnIndex("value"));
+                    try {
+                        if(genHash(key).compareTo(originHash)<=0){
+                            response=response+key+"-"+value+",";
+                            keyList.add(key);
+                        }
+                    } catch (NoSuchAlgorithmException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+            for(String s:keyList){
+                int deletedRows=delete(mUri,s,null);
+            }
+
+
+            return response;
+
+        }
 
         protected void onProgressUpdate(String...strings) {
             /*
@@ -734,7 +760,6 @@ public class SimpleDhtProvider extends ContentProvider {
 
 
         protected void callClientTask(String msg, String port){
-
             //creating async client tasks
            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg,port);
            return;
