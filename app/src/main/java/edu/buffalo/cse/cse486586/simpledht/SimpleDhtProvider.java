@@ -71,6 +71,60 @@ public class SimpleDhtProvider extends ContentProvider {
             }
         }else if(selection.equals("@")){
             deletedRows = sqlDB.delete(DBHelper.TABLE_NAME, null, null);
+        }else if(selection.equals("*")){
+            Log.d(TAG,"DELETE: DELETE ALL");
+        }else if(selection.contains("*")){
+            Log.d(TAG,"DELETE: DELETE FORWARD");
+        }else if (!selection.contains(":")) {
+            //has a key
+            Log.d(TAG, "DELETE: DELETE SELECTION IS: " + selection);
+            String originHash = null;
+            try {
+                originHash = genHash(selection);
+            } catch (NoSuchAlgorithmException e) {
+                e.printStackTrace();
+            }
+            //check if the key belongs in my space- if so query the database and return the cursor
+            if (checkIfKeyBelongsToMe(originHash)) {
+                //query the database and return cursor
+                deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection});
+                return deletedRows;
+            } else {
+                //else forward the request to the next node
+               // synchronized (syncList) {
+                    Log.d(TAG, "DELETE: DELETE KEY:  FORWARD");
+                    Message queryForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "DELETE");
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
+
+            }
+        } else {
+            //forwarded request for key
+            //check if belongs to you - if so, return cursor else forward the request to the successor
+            Log.d(TAG, "DELETE: DELETE SELECTION IS: " + selection);
+            String key = selection.split(":")[0];
+            String[] selectArgs = {key};
+            String originPort = selection.split(":")[1];
+            String originHash = null;
+            try {
+                originHash = genHash(key);
+            } catch (NoSuchAlgorithmException e) {
+                e.printStackTrace();
+            }
+
+            if (checkIfKeyBelongsToMe(originHash)) {
+                Log.d(TAG, "DELETE: DELETE MY KEY SPACE");
+                deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection});
+                /*String response = null;
+
+                Message queryResponse = new Message(originPort, selection, response, myPortID, "QUERY_RESPONSE");
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryResponse.toString(), originPort);*/
+
+            } else {
+
+                Log.d(TAG, "DELETE: DELETE FORWARD");
+                Message queryForward = new Message(originPort, selection, null, myPortID, "DELETE");
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
+            }
         }
         //other options to be added
         return deletedRows;
@@ -243,9 +297,11 @@ public class SimpleDhtProvider extends ContentProvider {
                 } else {
                     cursor = sqLiteQueryBuilder.query(sqlDB, projection, "key = ?", mSelectionArgs, null, null, sortOrder);
                 }
+                return cursor;
             } else if (selection.equals("@")) {
                 cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
                 Log.d(TAG, "QUERY: @ CURSOR IS: " + cursor.toString());
+                return cursor;
             } else if (selection.equals("*")) {
                 Log.d(TAG, "QUERY: QUERY ALL: I AM THE ORIGIN");
                 synchronized (syncList) {
@@ -273,7 +329,7 @@ public class SimpleDhtProvider extends ContentProvider {
                     for (String s : syncList) {
 
                         Object[] objectValues = new Object[2];
-                        if(!s.equals(null)) {
+                        if(!s.equals(null) && s.contains("-")) {
                             objectValues[0] = s.split("-")[0]; //key
                             objectValues[1] = s.split("-")[1]; //value
                             matrixCursor.addRow(objectValues);
@@ -283,9 +339,6 @@ public class SimpleDhtProvider extends ContentProvider {
                         }
                     }
                     syncList.clear();
-
-
-
                 //return the matrix cursor
                 return matrixCursor;
             } else if (selection.contains("*")) {
@@ -308,6 +361,9 @@ public class SimpleDhtProvider extends ContentProvider {
                         while (cursor.moveToNext()) {
                             response = response+cursor.getString(cursor.getColumnIndex("key")) + "-" + cursor.getString(cursor.getColumnIndex("value")) + ",";
                         }
+                    }
+                    else{
+                        response="NO DATA";
                     }
                     String originPort = selection.split(":")[1];
                     Message queryResponse = new Message(originPort, selection, response, myPortID, "QUERY_RESPONSE");
@@ -351,9 +407,11 @@ public class SimpleDhtProvider extends ContentProvider {
                         for (String s : syncList) {
                             Log.d(TAG, "LIST ITEM: " + s);
                             Object[] objectValues = new Object[2];
-                            objectValues[0] = s.split("-")[0]; //key
-                            objectValues[1] = s.split("-")[1]; //value
-                            matrixCursor.addRow(objectValues);
+                            if(s.contains("-")) {
+                                objectValues[0] = s.split("-")[0]; //key
+                                objectValues[1] = s.split("-")[1]; //value
+                                matrixCursor.addRow(objectValues);
+                            }
                         }
                         syncList.clear();
 
@@ -598,38 +656,19 @@ public class SimpleDhtProvider extends ContentProvider {
                                 String [] pairs=msgResponse.split(",");
                                 synchronized (syncList){
                                     for(String s:pairs){
-                                        if(s.contains("-")){
-                                            syncList.add(s);
-                                        }
+                                        syncList.add(s);
 
                                     }
                                     Log.d(TAG,"QUERY_RESPONSE: SYNCHRONIZED LIST");
-                                    Log.d(TAG,syncList.get(0));
-
+                                    //Log.d(TAG,syncList.get(0));
                                     syncList.notify();
                                 }
-                                /*for (String s :pairs) {
-
-                                    Object[] objectValues = new Object[2];
-                                    objectValues[0] = s.split("-")[0]; //key
-                                    objectValues[1] = s.split("-")[1]; //value
-                                    matrixCursor.addRow(objectValues);
-                                    syncList.notify();
-                                }*/
-                            }
+                                                            }
                             else{
-                                //single key request
-
-                                /*Object[] objectValues = new Object[2];
-                                objectValues[0] = msgResponse.split("-")[0]; //key
-                                objectValues[1] = msgResponse.split("-")[1]; //value
-                                matrixCursor.addRow(objectValues);*/
                                 String [] pairs=msgResponse.split(",");
                                 synchronized (syncList){
                                     for(String s:pairs){
-                                        if(s.contains("-")){
-                                            syncList.add(s);
-                                        }
+                                        syncList.add(s);
 
                                     }
                                     Log.d(TAG,"QUERY_RESPONSE: SYNCHRONIZED LIST");
@@ -637,8 +676,6 @@ public class SimpleDhtProvider extends ContentProvider {
 
                                     syncList.notify();
                                 }
-
-                                //syncList.notifyAll();
                             }
                         }
                         else if(msgType.equals("INSERT")){
@@ -655,6 +692,7 @@ public class SimpleDhtProvider extends ContentProvider {
                         }
                         else if(msgType.equals("DELETE")){
                             Log.d(TAG,"ServerTask:DELETE");
+                            int deletedRows=delete( mUri, msgValues[1],null);
                         }
                         else{
                             Log.d(TAG,"ServerTask:else");
