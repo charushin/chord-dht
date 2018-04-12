@@ -28,17 +28,11 @@ public class SimpleDhtActivity extends Activity {
         mContentResolver = getContentResolver();
         mUri = buildUri("content", "edu.buffalo.cse.cse486586.simpledht.provider");
 
-        /*
-        * The code below for server task and Telephony Manager from PA1
-        *
-        * */
-
+        //The code below for server task and Telephony Manager from PA1
         TelephonyManager tel = (TelephonyManager) this.getSystemService(Context.TELEPHONY_SERVICE);
         String portStr = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
         final String myPort = String.valueOf((Integer.parseInt(portStr) * 2));
         Log.d(TAG, myPort);
-
-
 
         final TextView tv = (TextView) findViewById(R.id.textView1);
         tv.setMovementMethod(new ScrollingMovementMethod());
@@ -74,6 +68,14 @@ public class SimpleDhtActivity extends Activity {
                         tv.append(key+"\t"+value+"\n");
                     }
                 }
+            }
+        });
+
+        findViewById(R.id.button4).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                tv.setText("");
+                //Uri uri=mContentResolver.insert()
             }
         });
     }

@@ -31,9 +31,7 @@ import android.telephony.TelephonyManager;
 import android.util.Log;
 
 public class SimpleDhtProvider extends ContentProvider {
-
     static final String TAG = SimpleDhtProvider.class.getSimpleName();
-    static final String[] PORTS = {"11108", "11112", "11116", "11120", "11124"};
 
     static final int SERVER_PORT = 10000;
     public Uri mUri;
@@ -47,7 +45,7 @@ public class SimpleDhtProvider extends ContentProvider {
     List<String> syncList=Collections.synchronizedList(new LinkedList());
     boolean receivedAll=false;
 
-    /*
+    /* REFERENCES
     *https://developer.android.com/reference/android/database/MatrixCursor.html
     * https://docs.oracle.com/javase/tutorial/essential/concurrency/locksync.html
     * https://docs.oracle.com/javase/tutorial/essential/concurrency/guardmeth.html
@@ -60,15 +58,8 @@ public class SimpleDhtProvider extends ContentProvider {
     * Used code from my PA2B
      */
 
-
-    //changes made--- insert conditions replaced with checkIfKeyBelongsToMe()
-
     SQLiteDatabase sqlDB;
     String [] colNames={"key","value"};
-
-    MatrixCursor matrixCursor2=new MatrixCursor(colNames);
-    ContentValues contentValues;
-
 
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
@@ -85,31 +76,34 @@ public class SimpleDhtProvider extends ContentProvider {
                 deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection});
             }
         }else if(selection.equals("@")){
+            //If @, delete all from the current AVD
             deletedRows = sqlDB.delete(DBHelper.TABLE_NAME, null, null);
         }else if(selection.equals("*")){
-
+            //If *, delete all from all AVD. - Delete all and forward request by appending port
             Log.d(TAG,"DELETE: DELETE ALL");
             deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection});
             Message deleteForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "DELETE");
             new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, deleteForward.toString(), successor);
 
         }else if(selection.contains("*")){
+            //forwarded request
             Log.d(TAG,"DELETE: DELETE FORWARD");
-
             String key = selection.split(":")[0];
             String[] selectArgs = {key};
             String originPort = selection.split(":")[1];
 
             if(originPort.equals(myPortID)){
+                //if origin==myPort, all avds ave deleted. Ring complete
                 Log.d(TAG,"DELETE: DELETE ALL COMPLETE");
             }
             else{
+                //delete all and forward
                 deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection.split(":")[0]});
                 Message deleteForward = new Message(myPortID, selection, null, myPortID, "DELETE");
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, deleteForward.toString(), successor);
             }
         }else if (!selection.contains(":")) {
-            //has a key
+            //delete a single key
             Log.d(TAG, "DELETE: DELETE SELECTION IS: " + selection);
             String originHash = null;
             try {
@@ -117,22 +111,20 @@ public class SimpleDhtProvider extends ContentProvider {
             } catch (NoSuchAlgorithmException e) {
                 e.printStackTrace();
             }
-            //check if the key belongs in my space- if so query the database and return the cursor
+            //check if the key belongs in my space- if so delete from my DB
             if (checkIfKeyBelongsToMe(originHash)) {
                 //query the database and return cursor
                 deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection});
                 return deletedRows;
             } else {
                 //else forward the request to the next node
-               // synchronized (syncList) {
-                    Log.d(TAG, "DELETE: DELETE KEY:  FORWARD");
-                    Message deleteForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "DELETE");
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, deleteForward.toString(), successor);
-
+                Log.d(TAG, "DELETE: DELETE KEY:  FORWARD");
+                Message deleteForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "DELETE");
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, deleteForward.toString(), successor);
             }
         } else {
             //forwarded request for key
-            //check if belongs to you - if so, return cursor else forward the request to the successor
+            //check if belongs to you - if so, delete key else forward the request to the successor
             Log.d(TAG, "DELETE: DELETE SELECTION IS: " + selection);
             String key = selection.split(":")[0];
             String[] selectArgs = {key};
@@ -143,23 +135,15 @@ public class SimpleDhtProvider extends ContentProvider {
             } catch (NoSuchAlgorithmException e) {
                 e.printStackTrace();
             }
-
             if (checkIfKeyBelongsToMe(originHash)) {
                 Log.d(TAG, "DELETE: DELETE MY KEY SPACE");
                 deletedRows = sqlDB.delete(DBHelper.TABLE_NAME,"key=?",new String[]{selection});
-                /*String response = null;
-
-                Message queryResponse = new Message(originPort, selection, response, myPortID, "QUERY_RESPONSE");
-                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryResponse.toString(), originPort);*/
-
             } else {
-
                 Log.d(TAG, "DELETE: DELETE FORWARD");
                 Message queryForward = new Message(originPort, selection, null, myPortID, "DELETE");
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
             }
         }
-        //other options to be added
         return deletedRows;
     }
 
@@ -173,6 +157,7 @@ public class SimpleDhtProvider extends ContentProvider {
     public Uri insert(Uri uri, ContentValues values) {
         sqlDB=dbHelper.getWritableDatabase();
         //int originPort = Integer.parseInt(msgValues[0])/2;
+        Log.v("insert", values.toString());
         String originHash= null,predHash=null,succHash=null;
         try {
             originHash = genHash(String.valueOf(values.get("key")));
@@ -181,19 +166,12 @@ public class SimpleDhtProvider extends ContentProvider {
             int succPort = Integer.parseInt(successor)/2;
             succHash=genHash(String.valueOf(succPort));
             Log.d(TAG,"INSERT: PortID: "+myPortID+"#SUCCESSOR: "+successor+"#PREDECESSOR: "+predecessor);
-            Log.d(TAG,"INSERT: Key is: "+String.valueOf(values.get("key"))+" and hash is: "+originHash);
-            /*Log.d(TAG, "INSERT: pred and mine"+predHash.compareTo(myHash));
-            Log.d(TAG, "INSERT: pred and key"+predHash.compareTo(originHash));
-            Log.d(TAG, "INSERT: succ and mine"+succHash.compareTo(myHash));
-            Log.d(TAG, "INSERT: succ and origin"+succHash.compareTo(originHash));
-            Log.d(TAG, "INSERT: mine and origin"+myHash.compareTo(originHash));*/
+            //Log.d(TAG,"INSERT: Key is: "+String.valueOf(values.get("key"))+" and hash is: "+originHash);
         } catch (NoSuchAlgorithmException e) {
             e.printStackTrace();
         }
-        Log.d(TAG,"INSERT: My hash: "+myHash+"\nPredecessor Hash: "+predHash+"\nSucessor Hash: "+succHash+"\nKey Hash: "+originHash);
 
         long id=0;
-
         //check if only one avd, then only one insert
         if(checkIfKeyBelongsToMe(originHash)){
             Log.d(TAG,"INSERT: MY KEY SPACE");
@@ -209,15 +187,12 @@ public class SimpleDhtProvider extends ContentProvider {
             Log.d(TAG,"INSERT: FORWARD");
             Message msg=new Message(myPortID,values.get("key").toString(),values.get("value").toString(),myPortID,"INSERT");
             new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg.toString(),successor);
-           // return null;
+            // return null;
         }
-        //other options to be added
+
         Uri newUri= ContentUris.withAppendedId(uri,id);
-        //how to update after inserting????
-        Log.v("insert", values.toString());
         return newUri;
     }
-
 
     //cannot call network connections on UI thread- need async tasks
     //Referrence:https://stackoverflow.com/questions/19740604/how-to-fix-networkonmainthreadexception-in-android
@@ -229,10 +204,6 @@ public class SimpleDhtProvider extends ContentProvider {
         mUri = buildUri("content", "edu.buffalo.cse.cse486586.simpledht.provider");
         dbHelper=new DBHelper(getContext());
 
-        /*
-        * The code below for server task and Telephony Manager from PA1
-        *
-        * */
         // TelephonyManager tel = (TelephonyManager) this.getSystemService(Context.TELEPHONY_SERVICE);
         TelephonyManager tel = (TelephonyManager)getContext().getSystemService(Context.TELEPHONY_SERVICE);
         String portStr = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
@@ -270,13 +241,12 @@ public class SimpleDhtProvider extends ContentProvider {
             predecessor=myPort;
             successor=myPort;
         }
-
         return true;
     }
 
     @Override
     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
-            String sortOrder) {
+                        String sortOrder) {
         // TODO Auto-generated method stub
 
         Log.v("query", selection);
@@ -287,165 +257,161 @@ public class SimpleDhtProvider extends ContentProvider {
         sqLiteQueryBuilder.setTables(DBHelper.TABLE_NAME);
         String [] mSelectionArgs={selection};
 
-            //Cursor cursor=sqLiteQueryBuilder.query(sqlDB,projection,selection, selectionArgs,null,null, sortOrder);
-            Cursor cursor = null;
-            //check if only one avd - then all delete will be from here
-            if (predecessor == myPortID && successor == myPortID) {
-                if (selection.equals("*") || selection.equals("@")) {
-                    //query all from the avd
-                    cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
-                } else {
-                    cursor = sqLiteQueryBuilder.query(sqlDB, projection, "key = ?", mSelectionArgs, null, null, sortOrder);
-                }
-                return cursor;
-            } else if (selection.equals("@")) {
+        Cursor cursor = null;
+        //check if only one avd - then all query will be from here
+        if (predecessor == myPortID && successor == myPortID) {
+            if (selection.equals("*") || selection.equals("@")) {
+                //query all from the avd
                 cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
-                Log.d(TAG, "QUERY: @ CURSOR IS: " + cursor.toString());
-                return cursor;
-            } else if (selection.equals("*")) {
-                Log.d(TAG, "QUERY: QUERY ALL: I AM THE ORIGIN");
-                synchronized (syncList) {
-                    //return mine and forward query to successor
-                    cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
-                    if (cursor != null) {
-                        while (cursor.moveToNext()) {
-                            Object[] columnValues = new Object[2];
-                            columnValues[0] = cursor.getString(cursor.getColumnIndex("key"));
-                            columnValues[1] = cursor.getString(cursor.getColumnIndex("value"));
-                            matrixCursor.addRow(columnValues);
-                        }
+            } else {
+                cursor = sqLiteQueryBuilder.query(sqlDB, projection, "key = ?", mSelectionArgs, null, null, sortOrder);
+            }
+            return cursor;
+        } else if (selection.equals("@")) {
+            //query all from the current AVD
+            cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
+            //Log.d(TAG, "QUERY: @ CURSOR IS: " + cursor.toString());
+            return cursor;
+        } else if (selection.equals("*")) {
+            Log.d(TAG, "QUERY: QUERY ALL: I AM THE ORIGIN");
+            synchronized (syncList) {
+                //query all from current AVD and forward query to successor
+                cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
+                if (cursor != null) {
+                    while (cursor.moveToNext()) {
+                        Object[] columnValues = new Object[2];
+                        columnValues[0] = cursor.getString(cursor.getColumnIndex("key"));
+                        columnValues[1] = cursor.getString(cursor.getColumnIndex("value"));
+                        matrixCursor.addRow(columnValues);
                     }
-                    Message queryForward = new Message(myPortID, "*:" + myPortID, null, myPortID, "QUERY");
-                    //send to successor
+                }
+                Message queryForward = new Message(myPortID, "*:" + myPortID, null, myPortID, "QUERY");
+                //forward query all to successor
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
+                while (syncList.isEmpty() || !receivedAll) {
+                    try {
+                        syncList.wait();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+            //After receiving all the responses, add in the matrixCursor, clear the list and return
+            for (String s : syncList) {
+                Object[] objectValues = new Object[2];
+                if(!s.equals(null) && s.contains("-")) {
+                    objectValues[0] = s.split("-")[0]; //key
+                    objectValues[1] = s.split("-")[1]; //value
+                    matrixCursor.addRow(objectValues);
+                }
+                else{
+                    Log.d(TAG,"RECEIVED NULL");
+                }
+            }
+            syncList.clear();
+            return matrixCursor;
+        } else if (selection.contains("*")) {
+            if (selection.split(":")[1].equals(myPortID)) {
+                //ring complete
+                Log.d(TAG, "QUERY: QUERY ALL: RING COMPLETE");
+                synchronized (syncList){
+                    receivedAll = true;
+                    syncList.notify();
+                }
+            } else {
+                //request forwarded from some node
+                Log.d(TAG, "QUERY: RECEIVED QUERY ALL");
+                cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
+                String response = "";
+                if (cursor != null) {
+                    while (cursor.moveToNext()) {
+                        response = response+cursor.getString(cursor.getColumnIndex("key")) + "-" + cursor.getString(cursor.getColumnIndex("value")) + ",";
+                    }
+                }
+                else{
+                    response="NO DATA";
+                }
+                String originPort = selection.split(":")[1];
+                Message queryResponse = new Message(originPort, selection, response, myPortID, "QUERY_RESPONSE");
+                //send to origin the cursor
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryResponse.toString(), originPort);
+
+                Message queryForward = new Message(originPort, selection, null, myPortID, "QUERY");
+                //send to successor the request
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
+            }
+        } else if (!selection.contains(":")) {
+            //has a key
+            Log.d(TAG, "QUERY: QUERY SELECTION IS: " + selection);
+            String originHash = null;
+            try {
+                originHash = genHash(selection);
+            } catch (NoSuchAlgorithmException e) {
+                e.printStackTrace();
+            }
+            //check if the key belongs in my space- if so query the database and return the cursor
+            if (checkIfKeyBelongsToMe(originHash)) {
+                //query the database and return cursor
+                cursor = sqLiteQueryBuilder.query(sqlDB, projection, "key = ?", mSelectionArgs, null, null, sortOrder);
+                return cursor;
+            } else {
+                //else forward the request to the next node
+                synchronized (syncList) {
+                    Log.d(TAG, "QUERY: QUERY FORWARD");
+                    Message queryForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "QUERY");
                     new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
-                    while (syncList.isEmpty() || !receivedAll) {
+                    while (syncList.isEmpty()) {
                         try {
                             syncList.wait();
                         } catch (InterruptedException e) {
                             e.printStackTrace();
                         }
                     }
+                    Log.d(TAG, "RESPONSE: SIZE IS: " + syncList.size());
                 }
-                    for (String s : syncList) {
-                        Object[] objectValues = new Object[2];
-                        if(!s.equals(null) && s.contains("-")) {
-                            objectValues[0] = s.split("-")[0]; //key
-                            objectValues[1] = s.split("-")[1]; //value
-                            matrixCursor.addRow(objectValues);
-                        }
-                        else{
-                            Log.d(TAG,"RECEIVED NULL");
-                        }
+                for (String s : syncList) {
+                    Log.d(TAG, "LIST ITEM: " + s);
+                    Object[] objectValues = new Object[2];
+                    if(s.contains("-")) {
+                        objectValues[0] = s.split("-")[0]; //key
+                        objectValues[1] = s.split("-")[1]; //value
+                        matrixCursor.addRow(objectValues);
                     }
-                    syncList.clear();
-                //return the matrix cursor
+                }
+                syncList.clear();
                 return matrixCursor;
-            } else if (selection.contains("*")) {
-                if (selection.split(":")[1].equals(myPortID)) {
-                    //ring complete
-                    Log.d(TAG, "QUERY: QUERY ALL: RING COMPLETE");
-                    synchronized (syncList){
-                        receivedAll = true;
-                        syncList.notify();
-                    }
-                    //copy from list to cursor and return cursor
-                    //return cursor
-                } else {
-                    //request forwarded from some node
-                    Log.d(TAG, "QUERY: RECEIVED QUERY ALL");
-                    cursor = sqLiteQueryBuilder.query(sqlDB, projection, null, null, null, null, sortOrder);
-                    String response = "";
-                    if (cursor != null) {
-                        while (cursor.moveToNext()) {
-                            response = response+cursor.getString(cursor.getColumnIndex("key")) + "-" + cursor.getString(cursor.getColumnIndex("value")) + ",";
-                        }
-                    }
-                    else{
-                        response="NO DATA";
-                    }
-                    String originPort = selection.split(":")[1];
-                    Message queryResponse = new Message(originPort, selection, response, myPortID, "QUERY_RESPONSE");
-                    //send to origin the cursor
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryResponse.toString(), originPort);
-
-                    Message queryForward = new Message(originPort, selection, null, myPortID, "QUERY");
-                    //send to successor the request
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
-                }
-            } else if (!selection.contains(":")) {
-                //has a key
-                Log.d(TAG, "QUERY: QUERY SELECTION IS: " + selection);
-                String originHash = null;
-                try {
-                    originHash = genHash(selection);
-                } catch (NoSuchAlgorithmException e) {
-                    e.printStackTrace();
-                }
-                //check if the key belongs in my space- if so query the database and return the cursor
-                if (checkIfKeyBelongsToMe(originHash)) {
-                    //query the database and return cursor
-                    cursor = sqLiteQueryBuilder.query(sqlDB, projection, "key = ?", mSelectionArgs, null, null, sortOrder);
-                    return cursor;
-                } else {
-                    //else forward the request to the next node
-                    synchronized (syncList) {
-                        Log.d(TAG, "QUERY: QUERY FORWARD");
-                        Message queryForward = new Message(myPortID, selection + ":" + myPortID, null, myPortID, "QUERY");
-                        new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
-                        while (syncList.isEmpty()) {
-                            try {
-                                syncList.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                        Log.d(TAG, "RESPONSE: SIZE IS: " + syncList.size());
-                    }
-                        for (String s : syncList) {
-                            Log.d(TAG, "LIST ITEM: " + s);
-                            Object[] objectValues = new Object[2];
-                            if(s.contains("-")) {
-                                objectValues[0] = s.split("-")[0]; //key
-                                objectValues[1] = s.split("-")[1]; //value
-                                matrixCursor.addRow(objectValues);
-                            }
-                        }
-                        syncList.clear();
-                   return matrixCursor;
-                }
-            } else {
-                //forwarded request for key
-                //check if belongs to you - if so, return cursor else forward the request to the successor
-                Log.d(TAG, "QUERY: QUERY SELECTION IS: " + selection);
-                String key = selection.split(":")[0];
-                String[] selectArgs = {key};
-                String originPort = selection.split(":")[1];
-                String originHash = null;
-                try {
-                    originHash = genHash(key);
-                } catch (NoSuchAlgorithmException e) {
-                    e.printStackTrace();
-                }
-
-                if (checkIfKeyBelongsToMe(originHash)) {
-                    Log.d(TAG, "QUERY: QUERY MY KEY SPACE");
-                    cursor = sqLiteQueryBuilder.query(sqlDB, projection, "key = ?", selectArgs, null, null, sortOrder);
-                    String response = null;
-                    if (cursor != null && cursor.moveToFirst()) {
-                        /*while (cursor.moveToNext()) {*/
-                            response = cursor.getString(cursor.getColumnIndex("key")) + "-" + cursor.getString(cursor.getColumnIndex("value"));
-                        //}
-                    }
-                    Message queryResponse = new Message(originPort, selection, response, myPortID, "QUERY_RESPONSE");
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryResponse.toString(), originPort);
-
-                } else {
-                    Log.d(TAG, "QUERY: QUERY FORWARD");
-                    Message queryForward = new Message(originPort, selection, null, myPortID, "QUERY");
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
-                }
             }
-            return cursor;
+        } else {
+            //forwarded request for key
+            //check if belongs to you - if so, return cursor else forward the request to the successor
+            Log.d(TAG, "QUERY: QUERY SELECTION IS: " + selection);
+            String key = selection.split(":")[0];
+            String[] selectArgs = {key};
+            String originPort = selection.split(":")[1];
+            String originHash = null;
+            try {
+                originHash = genHash(key);
+            } catch (NoSuchAlgorithmException e) {
+                e.printStackTrace();
+            }
+
+            if (checkIfKeyBelongsToMe(originHash)) {
+                Log.d(TAG, "QUERY: QUERY MY KEY SPACE");
+                cursor = sqLiteQueryBuilder.query(sqlDB, projection, "key = ?", selectArgs, null, null, sortOrder);
+                String response = null;
+                if (cursor != null && cursor.moveToFirst()) {
+                    response = cursor.getString(cursor.getColumnIndex("key")) + "-" + cursor.getString(cursor.getColumnIndex("value"));
+                }
+                Message queryResponse = new Message(originPort, selection, response, myPortID, "QUERY_RESPONSE");
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryResponse.toString(), originPort);
+
+            } else {
+                Log.d(TAG, "QUERY: QUERY FORWARD");
+                Message queryForward = new Message(originPort, selection, null, myPortID, "QUERY");
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, queryForward.toString(), successor);
+            }
+        }
+        return cursor;
     }
 
     public boolean checkIfKeyBelongsToMe(String originHash){
@@ -468,11 +434,11 @@ public class SimpleDhtProvider extends ContentProvider {
             Log.d(TAG,"CHECK: MY KEY SPACE");
             return true;
         }else if(predHash.compareTo(myHash)>0 && originHash.compareTo(predHash)>0 ){
-            //insert first avd
-            Log.d(TAG,"CHECK: FIRST AVD");
+            //largest key
+            Log.d(TAG,"CHECK: LARGEST KEY");
             return true;
         } else if(originHash.compareTo(predHash)<0 && originHash.compareTo(myHash)<0 && predHash.compareTo(myHash)>0){
-            //small key
+            //smallest key
             Log.d(TAG,"CHECK: SMALLEST KEY");
             return true;
         }
@@ -514,16 +480,14 @@ public class SimpleDhtProvider extends ContentProvider {
                     //Accepting client connection using accept() method
                     Socket client = serverSocket.accept();
                     //System.out.println(client.isConnected()+" client connected and "+client.getRemoteSocketAddress());
-                    Log.d(TAG, " client connected" + client.getRemoteSocketAddress());
+                    //Log.d(TAG, " client connected" + client.getRemoteSocketAddress());
                     //Reading the message received by reading InputStream using BufferedReader
                     BufferedReader br = new BufferedReader(new InputStreamReader(client.getInputStream()));
 
-                    OutputStream server_os = client.getOutputStream();
-                    PrintWriter server_pw = new PrintWriter(server_os, true);
-
                     msgReceived = br.readLine();
-                    Log.d(TAG, "Server Side: Message Received is  " + msgReceived);
+                    //Log.d(TAG, "Server Side: Message Received is  " + msgReceived);
                     if (msgReceived != null) {
+                        Log.d(TAG,"SERVER: MESSAGE RECEIVED NOT NULL");
                         String[] msgValues=msgReceived.split("#");
                         Message msg = new Message(msgValues[0],msgValues[1],msgValues[2],msgValues[3],msgValues[4]);
 
@@ -542,35 +506,37 @@ public class SimpleDhtProvider extends ContentProvider {
 
                             //Sending predecessor as key value, sucessor as sender value and data as value
                             Log.d(TAG,"JOIN Request at port: "+myPortID);
-                            Log.d(TAG,"MSG RECEIVED: "+msgReceived);
+                            //Log.d(TAG,"MSG RECEIVED: "+msgReceived);
                             //check if you have to handle
                             if((predHash.compareTo(myHash)>0 && originHash.compareTo(predHash)>0) || (originHash.compareTo(myHash)<0 && originHash.compareTo(predHash)<0 && predHash.compareTo(myHash)>0)){
                                 Log.d(TAG,"FIRST AVD IN RING");
-                                //you are the first or last avd??/
+                                //New Node is smallest or largest compared to all the existing nodes in the ring
                                 //you are the successor
                                 //update your predecessor value and send message to pred and origin to update their successor and prredecessor
+
+                                //setting message type
                                 String old_predeccesor=predecessor;
                                 msg.setType("UPDATE_NEIGHBOR");
-                                //msg.setValue(old_predeccesor);
+
+                                //Sending predecessor value in key
                                 msg.setKey(old_predeccesor);
 
                                 predecessor= msgValues[0];
+
+                                //sending sucessor as sender
                                 msg.setSender(myPortID);
 
                                 //fetch data now belonging to newAVD and delete from my storage
                                 String response=deleteAndReturn(originHash);
-                                //send it along with the message
+                                //send it along with the message as value
                                 msg.setValue(response);
 
-                               // new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg.toString(),msgValues[0]);
+                                // new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg.toString(),msgValues[0]);
                                 Message msg2=new Message(msgValues[0],msgValues[1],msgValues[2],msgValues[3],"UPDATE_SUCCESSOR");
                                 //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg2.toString(),old_predeccesor);
 
                                 //then send data to the new node after updating pointers
                                 publishProgress(msg.toString(),msgValues[0],msg2.toString(),old_predeccesor);
-                                //will have to query the content provider for data (new_pred<key<my_current) and then send over the same socket
-                                //not sure about how this works
-
                             }
                             else if(predecessor.equals(myPortID) && myPortID.equals(successor)){
                                 //or only AVD in the ring -
@@ -578,8 +544,6 @@ public class SimpleDhtProvider extends ContentProvider {
                                 predecessor=msgValues[0];
                                 successor=msgValues[0];
                                 String response=deleteAndReturn(originHash);
-                                //msg.setValue(response);
-
 
                                 Log.d(TAG,"Updated my neighbors: "+predecessor+" and "+successor);
                                 Log.d(TAG,"Sending msg to new node");
@@ -610,7 +574,6 @@ public class SimpleDhtProvider extends ContentProvider {
 
                                 //will have to query the content provider for data (new_pred<key<my_current) and then send over the same socket
                                 //not sure about how this works
-
                             }
                             else {
                                 //forward this request to your successor
@@ -653,38 +616,23 @@ public class SimpleDhtProvider extends ContentProvider {
                             Log.d(TAG,"ServerTask:QUERY");
                             Cursor cursor=query( mUri, null, msgValues[1], null, null);
                             if(cursor!=null)
-                            while(cursor.moveToNext()){
-                                Log.d(TAG, "QUERY: CURSOR: "+cursor.toString());
-                            }
+                                while(cursor.moveToNext()){
+                                    Log.d(TAG, "QUERY: CURSOR: "+cursor.toString());
+                                }
                         }
                         else if(msgType.equals("QUERY_RESPONSE")){
                             String msgResponse=msgValues[2];
-                            Log.d(TAG,"QUERYY_RESPONSE: Message received is: "+msgResponse);
+                            Log.d(TAG,"QUERYY_RESPONSE: Key-Value Pairs received");
                             String key=msgValues[1];
-                            if(key.contains("*")){
-                                //response for query all
-                                String [] pairs=msgResponse.split(",");
-                                synchronized (syncList){
-                                    for(String s:pairs){
-                                        syncList.add(s);
+                            String [] pairs=msgResponse.split(",");
+                            synchronized (syncList) {
+                                for (String s : pairs) {
+                                    syncList.add(s);
 
-                                    }
-                                    Log.d(TAG,"QUERY_RESPONSE: SYNCHRONIZED LIST");
-                                    //Log.d(TAG,syncList.get(0));
-                                    syncList.notify();
                                 }
-                                                            }
-                            else{
-                                String [] pairs=msgResponse.split(",");
-                                synchronized (syncList){
-                                    for(String s:pairs){
-                                        syncList.add(s);
-                                    }
-                                    Log.d(TAG,"QUERY_RESPONSE: SYNCHRONIZED LIST");
-                                    Log.d(TAG,syncList.get(0));
-
-                                    syncList.notify();
-                                }
+                                Log.d(TAG, "QUERY_RESPONSE: SYNCHRONIZED LIST");
+                                //Log.d(TAG,syncList.get(0));
+                                syncList.notify();
                             }
                         }
                         else if(msgType.equals("INSERT")){
@@ -707,10 +655,12 @@ public class SimpleDhtProvider extends ContentProvider {
                 } catch (Exception e){
                     e.printStackTrace();
                 }
-               // return null;
+                // return null;
             } // end of while loop
         }  //end-doInBackground
 
+        //This method will query the current node and store all the values whose key hash less than originash(New Hash) and return the list
+        //Also deletes the values from its own database
         public String deleteAndReturn(String originHash){
             String response="";
             List<String> keyList=new ArrayList<String>();
@@ -732,47 +682,32 @@ public class SimpleDhtProvider extends ContentProvider {
             for(String s:keyList){
                 int deletedRows=delete(mUri,s,null);
             }
-
-
             return response;
-
         }
 
         protected void onProgressUpdate(String...strings) {
             /*
              * The following code displays what is received in doInBackground().
              */
-                String msg1=strings[0];
-                String port1=strings[1];
-                String msg2=strings[2];
-                String port2=strings[3];
-                Log.d(TAG,"onProgressUpdate: Message Received is: "+msg1+"-"+port1+"-"+msg2+"-"+port2);
+            String msg1=strings[0];
+            String port1=strings[1];
+            String msg2=strings[2];
+            String port2=strings[3];
+            Log.d(TAG,"onProgressUpdate: Message Received is: "+msg1+"-"+port1+"-"+msg2+"-"+port2);
 
             new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg1,port1);
             Log.d(TAG,"PROGRESS: Second message: "+(msg2==null));
-                if(msg2!=null && port2!=null){
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg2,port2);
-                }
-
-
+            if(msg2!=null && port2!=null){
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg2,port2);
+            }
             return;
-        }
-
-
-        protected void callClientTask(String msg, String port){
-            //creating async client tasks
-           new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,msg,port);
-           return;
         }
     }
 
-                private class ClientTask extends AsyncTask<String, Void, Void> {
-
-
+    private class ClientTask extends AsyncTask<String, Void, Void> {
 
         @Override
         protected Void doInBackground(String... msgs) {
-
             String msgToSend=msgs[0];
             String portToSend=msgs[1];
 
@@ -785,20 +720,16 @@ public class SimpleDhtProvider extends ContentProvider {
                 OutputStream os = socket.getOutputStream();
                 PrintWriter pw = new PrintWriter(os, true);
                 //Writing the message to be send to the other device on the socket's output stream.
-                Log.d(TAG,"CLIENT TASK: Msg to send is: "+msgToSend);
+                Log.d(TAG,"CLIENT TASK: Sending message to "+portToSend);
                 pw.println(msgToSend);
                 pw.flush();
 
-                //socket.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
-
-
             return null;
         }
     }
-
 }
 
 
