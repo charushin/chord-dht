@@ -500,7 +500,7 @@ public class SimpleDhtProvider extends ContentProvider {
                             Log.d(TAG,"JOIN Request at port: "+myPortID);
                             Log.d(TAG,"MSG RECEIVED: "+msgReceived);
                             //check if you have to handle
-                            if((originHash.compareTo(myHash)>0 && predHash.compareTo(myHash)>0 && succHash.compareTo(myHash)>=0) || (originHash.compareTo(myHash)<0 && originHash.compareTo(predHash)<0 && predHash.compareTo(myHash)>0)){
+                            if((predHash.compareTo(myHash)>0 && originHash.compareTo(predHash)>0) || (originHash.compareTo(myHash)<0 && originHash.compareTo(predHash)<0 && predHash.compareTo(myHash)>0)){
                                 Log.d(TAG,"FIRST AVD IN RING");
                                 //you are the first or last avd??/
                                 //you are the successor
@@ -598,7 +598,10 @@ public class SimpleDhtProvider extends ContentProvider {
                                 String [] pairs=msgResponse.split(",");
                                 synchronized (syncList){
                                     for(String s:pairs){
-                                        syncList.add(s);
+                                        if(s.contains("-")){
+                                            syncList.add(s);
+                                        }
+
                                     }
                                     Log.d(TAG,"QUERY_RESPONSE: SYNCHRONIZED LIST");
                                     Log.d(TAG,syncList.get(0));
@@ -624,7 +627,10 @@ public class SimpleDhtProvider extends ContentProvider {
                                 String [] pairs=msgResponse.split(",");
                                 synchronized (syncList){
                                     for(String s:pairs){
-                                        syncList.add(s);
+                                        if(s.contains("-")){
+                                            syncList.add(s);
+                                        }
+
                                     }
                                     Log.d(TAG,"QUERY_RESPONSE: SYNCHRONIZED LIST");
                                     Log.d(TAG,syncList.get(0));
