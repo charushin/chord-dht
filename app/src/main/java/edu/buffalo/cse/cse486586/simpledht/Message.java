@@ -112,7 +112,7 @@ public class Message {
     @Override
     public String toString() {
 
-        StringBuilder sb = new StringBuilder(origin+"#"+key+"#"+value+"#"+hash+"#"+sender+"#"+type+"#"+response);
+        StringBuilder sb = new StringBuilder(origin+"#"+key+"#"+value+"#"+sender+"#"+type);
         return sb.toString();
     }
 }
